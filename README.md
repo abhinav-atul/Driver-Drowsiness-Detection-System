@@ -1,322 +1,198 @@
-# 🚨 Real-Time Drowsiness Detection System using CNN and Computer Vision
+# 🚗 Driver Drowsiness Detection System
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://tensorflow.org/)
-[![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)](https://opencv.org/)
+A real-time driver drowsiness detection system that uses a **1D CNN model** trained on facial landmark data to classify alert vs. drowsy states. Combines deep learning inference with Eye Aspect Ratio (EAR) analysis for robust, low-latency detection — with GPU acceleration support and a professional audio alert system.
 
-> **An advanced AI-powered drowsiness detection system that uses deep learning and computer vision to monitor driver alertness in real-time. Built with CNN architecture and optimized for NVIDIA RTX GPUs.**
-
-## 🎯 Project Overview
-
-This project implements a sophisticated drowsiness detection system that combines:
-- **Deep Learning**: Custom CNN model trained on facial landmarks
-- **Computer Vision**: Real-time face detection and eye tracking
-- **Audio Alerts**: Professional multi-layered warning system
-- **Performance Monitoring**: Real-time FPS and accuracy tracking
-- **GPU Optimization**: NVIDIA RTX acceleration with mixed precision
-
-### 🏆 Key Features
-
-- ⚡ **Real-time Detection**: 30 FPS performance with RTX GPU acceleration
-- 🎯 **84.9% Accuracy**: CNN model trained on comprehensive drowsiness dataset
-- 🔊 **Smart Audio Alerts**: Looping face-lost alerts and priority-based notifications
-- 📊 **Performance Analytics**: Live FPS monitoring and session statistics
-- 🎨 **Modern Interface**: Cyberpunk-style UI with neon effects
-- 🛡️ **Robust Architecture**: Multi-threaded audio system and error handling
+---
 
 ## 📁 Project Structure
 
 ```
-DDD_CNN_PE_Review3/
-├── 📄 drowsiness_cnn_final_1_model.h5     # Trained CNN model (84.9% accuracy)
-├── 🐍 fineTune.py                          # Model training and fine-tuning script
-├── 🤖 ultimate_drowsiness_detector_v3.py  # Main detection application
-├── 📊 split.py                             # Dataset splitting utility
-├── 🧪 Test.py                              # Testing and validation scripts
-├── 📋 preprocess_dataset.py                # Data preprocessing pipeline
-├── 🎯 shape_predictor_68_face_landmarks.dat # Dlib facial landmark model
-├── 📄 requirements.txt                     # Python dependencies
-└── 📖 README.md                            # Project documentation
+Driver-Drowsiness-Detection-System/
+│
+├── drowsiness_detector_v3.py   # Main real-time detection script
+├── fineTune.py                 # 4-phase CNN training pipeline
+├── preprocess_dataset.py       # Facial landmark extraction & dataset preprocessing
+├── split.py                    # Train/test dataset split utility
+├── requirements.txt            # Python dependencies
 ```
 
-## 📦 Dataset
+---
 
-- Kaggle Link for downloading dataset: [Download](https://www.kaggle.com/datasets/banudeep/nthuddd2)  
+## 🧠 How It Works
 
-## 🚀 Quick Start
+### Detection Pipeline
 
-### Prerequisites
+1. **Webcam Feed** → each frame is flipped (mirrored) for natural interaction
+2. **Face Detection** → dlib's frontal face detector runs on a scaled-down (75%) frame for speed
+3. **Landmark Extraction** → dlib's 68-point shape predictor extracts facial landmarks at full resolution
+4. **Dual Detection Logic**:
+   - **CNN Model** (`drowsiness_cnn_final_1_model.h5`): runs every 2 frames on normalized 136-dim landmark vectors → outputs drowsiness probability
+   - **Eye Aspect Ratio (EAR)**: monitors eyes independently; triggers if EAR < `0.25` for 12+ consecutive frames
+5. **Alert System** → audio alert fires if either CNN confidence > `0.55` or eyes stay closed too long, with a 3-second cooldown between alerts
 
-- Python 3.8 or higher
-- NVIDIA GPU (RTX series recommended for optimal performance)
-- CUDA Toolkit 11.x or 12.x
-- Webcam or USB camera
+### Model Architecture (CNN on Landmarks)
 
-### Installation
+The model operates on a `(136, 1)` shaped input — 68 facial landmarks × 2 coordinates (x, y), normalized per face.
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/DDD_CNN_PE_Review3.git
-   cd DDD_CNN_PE_Review3
-   ```
+```
+Input: (136, 1)
+→ Conv1D(64)  + ELU + BN + MaxPool + Dropout
+→ Conv1D(128) + ELU + BN + MaxPool + Dropout
+→ Conv1D(256) + ELU + BN + MaxPool + Dropout
+→ Conv1D(512) + ELU + BN + MaxPool + Dropout
+→ Flatten
+→ Dense(256) + Dense(128)
+→ Output: Softmax(2)  [alert, drowsy]
+```
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+L2 regularization (`0.001`) is applied across all conv and dense layers. The model achieves **84.9% accuracy** on the validation set.
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-4. **Download required models**
-   - Download `shape_predictor_68_face_landmarks.dat` from [dlib models](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2)
-   - Download `mmod_human_face_detector.dat` from [Kaggle](https://www.kaggle.com/datasets/leeast/mmod-human-face-detector-dat)
-   - Extract to project root directory
+## 🏋️ Training Pipeline
 
-### 🎮 Usage
+Training is handled by `fineTune.py` using a **4-phase progressive schedule**:
 
-#### Basic Detection
+| Phase | Name               | LR      | Batch | Epochs | Dropout |
+|-------|--------------------|---------|-------|--------|---------|
+| 1     | Initial Learning   | 0.001   | 64    | 18     | 0.4     |
+| 2     | Feature Refinement | 0.0003  | 128   | 12     | 0.3     |
+| 3     | Fine Tuning        | 0.0001  | 256   | 8      | 0.2     |
+| 4     | Final Optimization | 0.00001 | 512   | 4      | 0.1     |
+
+Between phases, weights are transferred to a newly instantiated model with updated dropout rates. EarlyStopping (patience=7) and ModelCheckpoint are used each phase.
+
+---
+
+## 🗂️ Data Preprocessing
+
+`preprocess_dataset.py` handles the full preprocessing pipeline:
+
+- Reads `train.txt` / `test.txt` (image path + label per line)
+- Extracts 68-point facial landmarks using dlib → 136 raw features per sample
+- Applies **per-face min-max normalization** on x and y coordinates separately
+- Saves output as compressed `.npz` files (`train_data.npz`, `test_data.npz`)
+- Logs failed samples and processing statistics as JSON
+
+`split.py` generates `train.txt` and `test.txt` from a dataset folder with two subfolders:
+```
+train_data/
+├── drowsy/
+└── notdrowsy/
+```
+An 80/20 stratified split is used.
+
+---
+
+## ⚡ GPU Acceleration
+
+The detector automatically detects NVIDIA GPUs via TensorFlow:
+- Enables memory growth to avoid full VRAM allocation
+- Runs CNN inference on `/GPU:0` with explicit device placement
+- Falls back to CPU seamlessly if no GPU is found
+- Performs 3 GPU warmup passes on startup for stable inference timing
+
+---
+
+## 🔊 Audio Alert System
+
+`AudioManager` (in `drowsiness_detector_v3.py`) generates all sounds **programmatically** using NumPy and pygame — no audio files needed:
+
+| Alert | Sound | Trigger |
+|-------|-------|---------|
+| Drowsiness | Urgent 3-tone alarm (800→1000→1200 Hz, 1.5s) | CNN prob > threshold or eyes closed |
+| Face Lost | Double beep (1500 Hz, 0.6s) | Face missing for 30+ frames |
+| Config Done | Pleasant C-E-G chime (0.8s) | Calibration phase complete |
+
+Audio runs in a dedicated daemon thread with a priority queue (max size 5). Drowsy alerts clear the queue to ensure immediate playback.
+
+---
+
+## 🎮 Runtime Controls
+
+| Key | Action |
+|-----|--------|
+| `D` | Toggle facial landmark overlay |
+| `A` | Toggle model accuracy display |
+| `P` | Toggle FPS / performance monitor |
+| `C` | Start manual calibration phase (8s) |
+| `R` | Reset session statistics |
+| `T` | Toggle detailed session stats |
+| `S` | Save screenshot as JPEG |
+| `Q` | Quit |
+
+---
+
+## 🛠️ Installation & Setup
+
+### 1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+> **Note:** `dlib` requires CMake and a C++ compiler. On Windows, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) before installing dlib.
+
+### 2. Download required model files
+
+Place the following files in your project directory (or update paths in the scripts):
+
+- `shape_predictor_68_face_landmarks.dat` — [dlib model zoo](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2)
+- `drowsiness_cnn_final_1_model.h5` — trained CNN model (train using `fineTune.py`)
+
+### 3. Prepare dataset (for training)
+
+```bash
+# Organize images into:
+# train_data/drowsy/  and  train_data/notdrowsy/
+
+python split.py                  # Creates train.txt and test.txt
+python preprocess_dataset.py     # Extracts landmarks, saves .npz files
+python fineTune.py               # Trains 4-phase CNN, saves model
+```
+
+### 4. Run the detector
+
 ```bash
 python drowsiness_detector_v3.py
 ```
 
-#### Advanced Options
+**Optional flags:**
+
 ```bash
-# Manual configuration mode
-python drowsiness_detector_v3.py --manual-config
-
-# Different camera
-python drowsiness_detector_v3.py --camera-index 1
-
-# Disable audio alerts
-python drowsiness_detector_v3.py --no-audio
-
-# Force CPU mode
-python drowsiness_detector_v3.py --force-cpu
+python drowsiness_detector_v3.py --manual-config   # Start with 8s calibration phase
+python drowsiness_detector_v3.py --camera-index 1  # Use a different webcam
+python drowsiness_detector_v3.py --no-audio        # Disable audio alerts
+python drowsiness_detector_v3.py --force-cpu       # Disable GPU, use CPU only
 ```
-
-#### Interactive Controls
-- **D**: Toggle enhanced landmarks
-- **A**: Toggle accuracy display
-- **P**: Toggle performance metrics
-- **C**: Start manual configuration
-- **R**: Reset session statistics
-- **Q**: Quit application
-- **S**: Save screenshot
-
-## 🧠 Model Architecture
-
-### CNN Architecture
-```
-Input Layer (136 landmarks) → Conv1D(64) → MaxPooling1D → 
-Conv1D(128) → MaxPooling1D → Conv1D(256) → GlobalMaxPooling1D → 
-Dense(512) → Dropout(0.5) → Dense(256) → Dropout(0.3) → 
-Dense(2, activation='softmax')
-```
-
-### Performance Metrics
-- **Training Accuracy**: 84.9%
-- **Validation Accuracy**: 82.3%
-- **Inference Time**: 2-5ms (RTX GPU)
-- **Real-time Performance**: 30 FPS
-
-## 🔧 Technical Implementation
-
-### Core Technologies
-- **Deep Learning Framework**: TensorFlow/Keras
-- **Computer Vision**: OpenCV, dlib
-- **Audio Processing**: pygame
-- **GPU Acceleration**: CUDA, cuDNN
-- **Threading**: Multi-threaded audio system
-
-### Key Algorithms
-1. **Face Detection**: Dlib's HOG-based detector
-2. **Landmark Extraction**: 68-point facial landmark detection
-3. **Eye Aspect Ratio (EAR)**: Mathematical drowsiness indicator
-4. **CNN Classification**: Deep learning-based drowsiness prediction
-5. **Temporal Smoothing**: Moving average for stable predictions
-
-### Performance Optimizations
-- **Mixed Precision**: Float16 operations for 2x speed boost
-- **Tensor Cores**: RTX hardware acceleration
-- **Async GPU Execution**: Non-blocking GPU operations
-- **Smart Caching**: Intelligent prediction intervals
-- **Vectorized Operations**: NumPy optimizations
-
-## 📊 Dataset Information
-
-The model is trained on a comprehensive drowsiness dataset containing:
-- **Alert Samples**: 15,000+ images
-- **Drowsy Samples**: 12,000+ images
-- **Diverse Demographics**: Multiple age groups and ethnicities
-- **Varying Conditions**: Different lighting and angles
-
-> 📎 **Dataset Link**: [Insert your dataset link here]
-
-## 🎵 Audio System Features
-
-### Professional Alert Sounds
-- **Drowsiness Alert**: Multi-tone emergency sequence
-- **Face Lost Alert**: Attention-grabbing loop pattern
-- **Configuration Complete**: Pleasant completion chime
-
-### Smart Audio Management
-- **Priority System**: Drowsiness alerts override other sounds
-- **Looping Alerts**: Face-lost alerts loop every 2 seconds
-- **Auto-Stop**: Loops stop after 10 seconds or when face detected
-- **Thread-Safe**: Non-blocking audio processing
-
-## 🎨 Visual Interface
-
-### Cyberpunk-Style UI
-- **Neon Effects**: Glowing text and UI elements
-- **Gradient Overlays**: Professional dark themes
-- **Dynamic Colors**: Color-coded confidence levels
-- **3D Effects**: Depth shadows and layered interfaces
-
-### Real-Time Analytics
-- **Performance Grades**: S+, A+, A, B+, B, C, F rating system
-- **GPU Metrics**: RTX utilization and efficiency tracking
-- **Session Statistics**: Comprehensive detection analytics
-- **Confidence Visualization**: Real-time confidence bars
-
-## 🔬 Model Training
-
-### Training Process
-```bash
-# Preprocess dataset
-python preprocess_dataset.py
-
-# Split data into train/validation/test
-python split.py
-
-# Train the CNN model
-python fineTune.py
-```
-
-### Training Features
-- **Data Augmentation**: Rotation, scaling, brightness adjustment
-- **Early Stopping**: Prevents overfitting
-- **Learning Rate Scheduling**: Adaptive learning rate
-- **Model Checkpointing**: Save best performing models
-- **Visualization**: Training curves and performance metrics
-
-## 🚗 Real-World Applications
-
-### Automotive Industry
-- **Driver Monitoring Systems**: Integration with vehicle safety systems
-- **Fleet Management**: Monitor commercial driver alertness
-- **Insurance Solutions**: Risk assessment and premium calculation
-
-### Safety Applications
-- **Industrial Monitoring**: Heavy machinery operation safety
-- **Security Systems**: Security guard alertness monitoring
-- **Medical Devices**: Patient monitoring in healthcare
-
-## 📈 Performance Benchmarks
-
-### Hardware Performance
-| Hardware | FPS | Inference Time | Power Usage |
-|----------|-----|----------------|-------------|
-| RTX 4050 | 30+ | 2-3ms | 45-60W |
-| RTX 3060 | 28+ | 3-4ms | 50-65W |
-| CPU (i7) | 12-15 | 15-25ms | 25-35W |
-
-### Accuracy Metrics
-| Metric | Score |
-|--------|-------|
-| Precision | 85.2% |
-| Recall | 83.7% |
-| F1-Score | 84.4% |
-| AUC-ROC | 0.891 |
-
-## 🛠️ Configuration Options
-
-### Detection Parameters
-```python
-DROWSINESS_THRESHOLD = 0.55    # CNN confidence threshold
-EYE_AR_THRESHOLD = 0.25        # Eye aspect ratio threshold
-CONSECUTIVE_FRAMES = 3         # Required consecutive detections
-SMOOTHING_WINDOW = 5           # Temporal smoothing window
-```
-
-### Audio Settings
-```python
-FACE_LOST_LOOP_INTERVAL = 2    # Loop interval (seconds)
-FACE_LOST_MAX_DURATION = 10    # Maximum loop duration
-ALERT_COOLDOWN = 3             # Cooldown between alerts
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**GPU Not Detected**
-```bash
-# Check CUDA installation
-nvidia-smi
-
-# Verify TensorFlow GPU support
-python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
-```
-
-**Audio Issues**
-```bash
-# Reinstall pygame
-pip uninstall pygame
-pip install pygame
-
-# Check audio system
-python -c "import pygame; pygame.mixer.init(); print('Audio OK')"
-```
-
-**Camera Access**
-```bash
-# List available cameras
-python -c "import cv2; [print(f'Camera {i}') for i in range(3) if cv2.VideoCapture(i).isOpened()]"
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Setup
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-
-## 🙏 Acknowledgments
-
-- **Dlib Library**: For facial landmark detection
-- **TensorFlow Team**: For the deep learning framework
-- **OpenCV Community**: For computer vision tools
-- **NVIDIA**: For CUDA and GPU acceleration support
-
-## 📞 Contact
-
-- **Author**: Krish Goyal
-- **Email**: krishaggarwal1452@gmail.com
-- **LinkedIn**: [\[LinkedIn Profile\]](https://www.linkedin.com/in/krish-goyal-b58a31320/)
-- **GitHub**: [\[GitHub Profile\]](https://github.com/goyalk01)
-
-## 🌟 Star History
-
-If you find this project useful, please consider giving it a star ⭐!
 
 ---
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Made%20with-❤️-red.svg" alt="Made with love">
-  <img src="https://img.shields.io/badge/Python-Powered-blue.svg" alt="Python Powered">
-  <img src="https://img.shields.io/badge/AI-Enhanced-green.svg" alt="AI Enhanced">
-</p>
+## 📦 Dependencies
 
-<p align="center">
-  <strong>Built for safety, powered by AI 🚗🤖</strong>
-</p>
+| Package | Version |
+|---------|---------|
+| opencv-python | ≥ 4.7.0 |
+| dlib | ≥ 19.24.0 |
+| tensorflow | ≥ 2.10.0 |
+| numpy | ≥ 1.25.0 |
+| pygame | latest |
+| scikit-learn | ≥ 1.2.0 |
+| matplotlib | ≥ 3.6.0 |
+| seaborn | ≥ 0.11.0 |
+| pandas | ≥ 1.5.0 |
+
+---
+
+## 📊 Detection Parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `DROWSINESS_THRESHOLD` | 0.55 | CNN probability above which drowsiness is flagged |
+| `EYE_AR_THRESHOLD` | 0.25 | EAR below which eyes are considered closed |
+| `EYE_AR_CONSEC_FRAMES` | 12 | Consecutive closed-eye frames before alert |
+| `CONSECUTIVE_FRAMES` | 3 | Consecutive drowsy frames to trigger alert |
+| `SMOOTHING_WINDOW` | 5 | Rolling average window for prediction smoothing |
+| `ALERT_COOLDOWN` | 3s | Minimum time between consecutive alerts |
+| `CNN_PREDICTION_INTERVAL` | 2 | Run CNN every N frames |
+| `FACE_DETECTION_SCALE` | 0.75 | Scale factor for faster face detection |
